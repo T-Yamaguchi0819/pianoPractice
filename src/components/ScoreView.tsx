@@ -1,17 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay'
 
-type Props = { xml: string }
+type Props = {
+  xml: string
+  /** 譜面の描画完了時に OSMD インスタンスを渡す(練習モードのカーソル制御用) */
+  onReady?: (osmd: OpenSheetMusicDisplay) => void
+  onUnload?: () => void
+  /** 手動カーソル操作の表示(練習中は非表示にする) */
+  showManualControls?: boolean
+}
 
-/**
- * OSMD による譜面描画とカーソル制御。
- * Phase 2 では手動ボタンでカーソルを音符単位に進める(練習モード結合は Phase 4)。
- */
-export function ScoreView({ xml }: Props) {
+/** OSMD による譜面描画とカーソル制御 */
+export function ScoreView({
+  xml,
+  onReady,
+  onUnload,
+  showManualControls = true,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const onReadyRef = useRef(onReady)
+  const onUnloadRef = useRef(onUnload)
+  onReadyRef.current = onReady
+  onUnloadRef.current = onUnload
 
   useEffect(() => {
     const container = containerRef.current
@@ -21,6 +34,7 @@ export function ScoreView({ xml }: Props) {
       autoResize: true,
       drawTitle: true,
       drawComposer: true,
+      followCursor: true,
     })
     osmd
       .load(xml)
@@ -31,6 +45,7 @@ export function ScoreView({ xml }: Props) {
         osmdRef.current = osmd
         setReady(true)
         setError(null)
+        onReadyRef.current?.(osmd)
       })
       .catch((e: unknown) => {
         if (cancelled) return
@@ -43,6 +58,7 @@ export function ScoreView({ xml }: Props) {
       cancelled = true
       osmdRef.current = null
       setReady(false)
+      onUnloadRef.current?.()
       container.innerHTML = ''
     }
   }, [xml])
@@ -51,32 +67,34 @@ export function ScoreView({ xml }: Props) {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2 self-end">
-        <button
-          type="button"
-          className="rounded border border-ink/30 px-3 py-1 text-sm hover:bg-ink/5 disabled:opacity-40"
-          disabled={!ready}
-          onClick={() => cursor()?.reset()}
-        >
-          先頭へ
-        </button>
-        <button
-          type="button"
-          className="rounded border border-ink/30 px-3 py-1 text-sm hover:bg-ink/5 disabled:opacity-40"
-          disabled={!ready}
-          onClick={() => cursor()?.previous()}
-        >
-          ← 戻る
-        </button>
-        <button
-          type="button"
-          className="rounded bg-accent px-3 py-1 text-sm text-white hover:opacity-90 disabled:opacity-40"
-          disabled={!ready}
-          onClick={() => cursor()?.next()}
-        >
-          進む →
-        </button>
-      </div>
+      {showManualControls && (
+        <div className="flex items-center gap-2 self-end">
+          <button
+            type="button"
+            className="rounded border border-ink/30 px-3 py-1 text-sm hover:bg-ink/5 disabled:opacity-40"
+            disabled={!ready}
+            onClick={() => cursor()?.reset()}
+          >
+            先頭へ
+          </button>
+          <button
+            type="button"
+            className="rounded border border-ink/30 px-3 py-1 text-sm hover:bg-ink/5 disabled:opacity-40"
+            disabled={!ready}
+            onClick={() => cursor()?.previous()}
+          >
+            ← 戻る
+          </button>
+          <button
+            type="button"
+            className="rounded bg-accent px-3 py-1 text-sm text-white hover:opacity-90 disabled:opacity-40"
+            disabled={!ready}
+            onClick={() => cursor()?.next()}
+          >
+            進む →
+          </button>
+        </div>
+      )}
       {error && <p className="text-sm text-red-700">{error}</p>}
       <div
         ref={containerRef}

@@ -1,9 +1,19 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { OpenSheetMusicDisplay } from 'opensheetmusicdisplay'
 import { FilePicker, type PickedScore } from './components/FilePicker'
 import { MidiPanel } from './components/MidiPanel'
 import { NoteLog } from './components/NoteLog'
+import { PracticeBar } from './components/PracticeBar'
 import { ScoreView } from './components/ScoreView'
-import { VirtualKeyboard } from './components/VirtualKeyboard'
+import {
+  VirtualKeyboard,
+  type KeyHighlight,
+} from './components/VirtualKeyboard'
+import {
+  PracticeSession,
+  type PracticeSnapshot,
+} from './core/practice/practiceSession'
+import { ScoreCursor, type OsmdCursorLike } from './core/score/scoreCursor'
 import { useMidi } from './hooks/useMidi'
 import { SAMPLES, type SampleMeta } from './samples'
 
@@ -16,10 +26,62 @@ function App() {
     pressed,
     log,
     emitDebugNote,
+    subscribeNote,
   } = useMidi()
   const [showNoteNames, setShowNoteNames] = useState(false)
   const [score, setScore] = useState<PickedScore | null>(null)
   const [sampleError, setSampleError] = useState<string | null>(null)
+
+  // 練習モード
+  const osmdRef = useRef<OpenSheetMusicDisplay | null>(null)
+  const sessionRef = useRef<PracticeSession | null>(null)
+  const [scoreReady, setScoreReady] = useState(false)
+  const [snapshot, setSnapshot] = useState<PracticeSnapshot | null>(null)
+  const startedAtRef = useRef<number | null>(null)
+  const [elapsedSec, setElapsedSec] = useState<number | null>(null)
+
+  const startPractice = useCallback(() => {
+    const osmd = osmdRef.current
+    if (!osmd) return
+    // OSMD Cursor は OsmdCursorLike を構造的に満たす(§7.1 で API 確認済み)
+    const cursor = new ScoreCursor(osmd.cursor as unknown as OsmdCursorLike)
+    const session = new PracticeSession(cursor)
+    sessionRef.current = session
+    startedAtRef.current = Date.now()
+    setElapsedSec(null)
+    setSnapshot(session.start())
+  }, [])
+
+  const stopPractice = useCallback(() => {
+    sessionRef.current = null
+    startedAtRef.current = null
+    setSnapshot(null)
+    osmdRef.current?.cursor.reset()
+  }, [])
+
+  // MIDI / デバッグ鍵盤の打鍵を練習セッションへ流す
+  useEffect(
+    () =>
+      subscribeNote((event) => {
+        const session = sessionRef.current
+        if (!session) return
+        const next =
+          event.kind === 'on'
+            ? session.noteOn(event.note)
+            : session.noteOff(event.note)
+        setSnapshot((prev) => {
+          if (
+            next.status === 'finished' &&
+            prev?.status !== 'finished' &&
+            startedAtRef.current !== null
+          ) {
+            setElapsedSec((Date.now() - startedAtRef.current) / 1000)
+          }
+          return next
+        })
+      }),
+    [subscribeNote],
+  )
 
   const loadSample = async (sample: SampleMeta) => {
     try {
@@ -33,6 +95,20 @@ function App() {
       setSampleError('サンプル曲を読み込めませんでした。')
     }
   }
+
+  // 練習中の鍵盤ハイライト(期待=青、正打=緑、誤打=赤)
+  const highlights = new Map<number, KeyHighlight>()
+  if (snapshot !== null && snapshot.status === 'waiting') {
+    snapshot.expected.forEach((note) =>
+      highlights.set(
+        note,
+        snapshot.satisfied.has(note) ? 'correct' : 'expected',
+      ),
+    )
+    snapshot.wrongPressed.forEach((note) => highlights.set(note, 'wrong'))
+  }
+
+  const practicing = snapshot !== null
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -81,14 +157,39 @@ function App() {
           </>
         ) : (
           <>
-            <button
-              type="button"
-              className="self-start text-sm text-accent underline-offset-2 hover:underline"
-              onClick={() => setScore(null)}
-            >
-              ← 別の曲を開く
-            </button>
-            <ScoreView xml={score.xml} />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                className="text-sm text-accent underline-offset-2 hover:underline"
+                onClick={() => {
+                  stopPractice()
+                  setScore(null)
+                }}
+              >
+                ← 別の曲を開く
+              </button>
+              <PracticeBar
+                snapshot={snapshot}
+                scoreReady={scoreReady}
+                elapsedSec={elapsedSec}
+                onStart={startPractice}
+                onStop={stopPractice}
+              />
+            </div>
+            <ScoreView
+              xml={score.xml}
+              showManualControls={!practicing}
+              onReady={(osmd) => {
+                osmdRef.current = osmd
+                setScoreReady(true)
+              }}
+              onUnload={() => {
+                osmdRef.current = null
+                sessionRef.current = null
+                setScoreReady(false)
+                setSnapshot(null)
+              }}
+            />
           </>
         )}
 
@@ -105,6 +206,7 @@ function App() {
       <footer className="px-2 pb-2">
         <VirtualKeyboard
           pressed={pressed}
+          highlights={highlights}
           showNoteNames={showNoteNames}
           onNoteOn={(note) => emitDebugNote('on', note)}
           onNoteOff={(note) => emitDebugNote('off', note)}
