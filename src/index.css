@@ -1,0 +1,17 @@
+@import 'tailwindcss';
+
+/* デザイントークン(計画書 §10: 紙白背景 + 墨色 + 深い青緑のアクセント) */
+@theme {
+  --color-paper: #faf7f2;
+  --color-ink: #2b2a27;
+  --color-accent: #1f6f6b;
+  --font-serif: 'Iowan Old Style', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  --font-sans:
+    'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', system-ui, sans-serif;
+}
+
+body {
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
