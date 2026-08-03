@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OpenSheetMusicDisplay } from 'opensheetmusicdisplay'
 import { ControlBar, type HandSelection } from './components/ControlBar'
-import { FilePicker, type PickedScore } from './components/FilePicker'
+import type { PickedScore } from './components/FilePicker'
+import { Home } from './components/Home'
 import { MidiPanel } from './components/MidiPanel'
-import { NoteLog } from './components/NoteLog'
 import { PracticeBar } from './components/PracticeBar'
 import { ScoreView } from './components/ScoreView'
 import {
@@ -19,8 +19,36 @@ import {
   type MeasureRange,
   type OsmdCursorLike,
 } from './core/score/scoreCursor'
+import {
+  computeScoreId,
+  extractTitle,
+  loadRecords,
+  loadSettings,
+  recordPractice,
+  saveSettings,
+  type KeyValueStorage,
+  type Records,
+} from './core/storage/records'
 import { useMidi } from './hooks/useMidi'
-import { SAMPLES, type SampleMeta } from './samples'
+import { type SampleMeta } from './samples'
+
+/** localStorage が使えない環境(プライベートモード等)でも動かすためのフォールバック */
+const memoryStorage: KeyValueStorage = {
+  getItem: () => null,
+  setItem: () => {},
+}
+
+function getStorage(): KeyValueStorage {
+  try {
+    window.localStorage.getItem('ppa:probe')
+    return window.localStorage
+  } catch {
+    return memoryStorage
+  }
+}
+
+const storage = getStorage()
+const initialSettings = loadSettings(storage)
 
 function App() {
   const {
@@ -32,10 +60,59 @@ function App() {
     log,
     emitDebugNote,
     subscribeNote,
-  } = useMidi()
-  const [showNoteNames, setShowNoteNames] = useState(false)
+  } = useMidi({ preferredDeviceId: initialSettings.midiDeviceId })
+  const [showNoteNames, setShowNoteNames] = useState(
+    initialSettings.showNoteNames,
+  )
   const [score, setScore] = useState<PickedScore | null>(null)
   const [sampleError, setSampleError] = useState<string | null>(null)
+
+  // 設定の永続化(計画書 §8)
+  useEffect(() => {
+    saveSettings(storage, {
+      midiDeviceId: selectedId ?? undefined,
+      showNoteNames,
+    })
+  }, [selectedId, showNoteNames])
+
+  // 練習記録(計画書 §5.5 / §8)
+  const [records, setRecords] = useState<Records>(() => loadRecords(storage))
+  const scoreMetaRef = useRef<{ id: string; title: string } | null>(null)
+  const practiceStartedRef = useRef<number | null>(null)
+  const completionsRef = useRef(0)
+
+  useEffect(() => {
+    scoreMetaRef.current = null
+    if (score === null) return
+    let cancelled = false
+    const title = extractTitle(score.xml) ?? score.fileName
+    void computeScoreId(score.fileName, score.xml).then((id) => {
+      if (!cancelled) scoreMetaRef.current = { id, title }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [score])
+
+  /** 進行中の練習を記録へ反映して締める(未開始なら何もしない) */
+  const commitPracticeRecord = useCallback(() => {
+    const startedAt = practiceStartedRef.current
+    const meta = scoreMetaRef.current
+    practiceStartedRef.current = null
+    if (startedAt === null || meta === null) {
+      completionsRef.current = 0
+      return
+    }
+    setRecords(
+      recordPractice(storage, {
+        scoreId: meta.id,
+        title: meta.title,
+        practiceSec: (Date.now() - startedAt) / 1000,
+        completions: completionsRef.current,
+      }),
+    )
+    completionsRef.current = 0
+  }, [])
 
   // 練習モード
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null)
@@ -86,6 +163,7 @@ function App() {
   const startPractice = useCallback(() => {
     const osmd = osmdRef.current
     if (!osmd) return
+    commitPracticeRecord() // 「もう一度」等で直前の練習が残っていれば先に記録
     // OSMD Cursor は OsmdCursorLike を構造的に満たす(§7.1 で API 確認済み)
     const cursor = new ScoreCursor(osmd.cursor as unknown as OsmdCursorLike, {
       staffIds: hand === 'right' ? [1] : hand === 'left' ? [2] : undefined,
@@ -95,19 +173,22 @@ function App() {
     sessionRef.current = session
     loopActiveRef.current = parsedRange.range !== undefined
     startedAtRef.current = Date.now()
+    practiceStartedRef.current = Date.now()
+    completionsRef.current = 0
     setLoopCount(0)
     setElapsedSec(null)
     setSnapshot(session.start())
-  }, [hand, parsedRange.range])
+  }, [hand, parsedRange.range, commitPracticeRecord])
 
   const stopPractice = useCallback(() => {
+    commitPracticeRecord()
     sessionRef.current = null
     loopActiveRef.current = false
     startedAtRef.current = null
     setSnapshot(null)
     setLoopCount(0)
     osmdRef.current?.cursor.reset()
-  }, [])
+  }, [commitPracticeRecord])
 
   // 小節範囲ループ: 完走したら少し置いて範囲の先頭から再開(計画書 §5.3)
   useEffect(() => {
@@ -133,12 +214,11 @@ function App() {
             ? session.noteOn(event.note)
             : session.noteOff(event.note)
         setSnapshot((prev) => {
-          if (
-            next.status === 'finished' &&
-            prev?.status !== 'finished' &&
-            startedAtRef.current !== null
-          ) {
-            setElapsedSec((Date.now() - startedAtRef.current) / 1000)
+          if (next.status === 'finished' && prev?.status !== 'finished') {
+            completionsRef.current++
+            if (startedAtRef.current !== null) {
+              setElapsedSec((Date.now() - startedAtRef.current) / 1000)
+            }
           }
           return next
         })
@@ -187,37 +267,13 @@ function App() {
 
       <main className="flex flex-1 flex-col gap-4 px-6 pb-4">
         {score === null ? (
-          <>
-            <FilePicker onLoaded={setScore} />
-            <section>
-              <h2 className="mb-2 text-sm font-bold text-ink/70">
-                サンプル曲(パブリックドメイン)
-              </h2>
-              <ul className="flex flex-wrap gap-2">
-                {SAMPLES.map((sample) => (
-                  <li key={sample.file}>
-                    <button
-                      type="button"
-                      className="rounded border border-ink/30 px-3 py-1.5 text-sm hover:bg-ink/5"
-                      onClick={() => void loadSample(sample)}
-                    >
-                      {sample.title}
-                      <span className="ml-1 text-xs text-ink/50">
-                        {sample.composer}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {sampleError && (
-                <p className="mt-2 text-sm text-red-700">{sampleError}</p>
-              )}
-            </section>
-            <section>
-              <h2 className="mb-2 text-sm font-bold text-ink/70">入力ログ</h2>
-              <NoteLog entries={log} />
-            </section>
-          </>
+          <Home
+            records={records}
+            log={log}
+            sampleError={sampleError}
+            onLoaded={setScore}
+            onLoadSample={(sample) => void loadSample(sample)}
+          />
         ) : (
           <>
             <div className="flex flex-wrap items-center justify-between gap-2">

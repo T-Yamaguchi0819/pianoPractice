@@ -16,11 +16,16 @@ export type NoteLogEntry = NoteEvent & {
 
 const LOG_LIMIT = 20
 
+export type UseMidiOptions = {
+  /** 前回選択していたデバイス ID(接続時に優先して自動選択する) */
+  preferredDeviceId?: string
+}
+
 /**
  * Web MIDI 接続の状態・デバイス選択・押下中ノート集合を管理するフック。
  * デバッグ鍵盤(クリック入力)も同じ経路で pressed / log に反映する。
  */
-export function useMidi() {
+export function useMidi({ preferredDeviceId }: UseMidiOptions = {}) {
   const [status, setStatus] = useState<MidiStatus>('requesting')
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -82,15 +87,22 @@ export function useMidi() {
     }
   }, [handleNote])
 
-  // デバイスリストの変化に選択を追随(未選択なら先頭を自動選択、消えたら乗り換え)
+  // デバイスリストの変化に選択を追随。
+  // 未選択なら前回使用デバイス(あれば)→ 先頭の順で自動選択、消えたら乗り換え
   useEffect(() => {
     setSelectedId((current) => {
       if (current !== null && devices.some((d) => d.id === current)) {
         return current
       }
+      if (
+        preferredDeviceId !== undefined &&
+        devices.some((d) => d.id === preferredDeviceId)
+      ) {
+        return preferredDeviceId
+      }
       return devices[0]?.id ?? null
     })
-  }, [devices])
+  }, [devices, preferredDeviceId])
 
   // 選択デバイスの購読を切り替え。押しっぱなしノートの取り残しを防ぐためリセット
   useEffect(() => {
