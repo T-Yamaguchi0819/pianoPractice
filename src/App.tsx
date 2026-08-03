@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { OpenSheetMusicDisplay } from 'opensheetmusicdisplay'
+import { ControlBar, type HandSelection } from './components/ControlBar'
 import { FilePicker, type PickedScore } from './components/FilePicker'
 import { MidiPanel } from './components/MidiPanel'
 import { NoteLog } from './components/NoteLog'
@@ -13,7 +14,11 @@ import {
   PracticeSession,
   type PracticeSnapshot,
 } from './core/practice/practiceSession'
-import { ScoreCursor, type OsmdCursorLike } from './core/score/scoreCursor'
+import {
+  ScoreCursor,
+  type MeasureRange,
+  type OsmdCursorLike,
+} from './core/score/scoreCursor'
 import { useMidi } from './hooks/useMidi'
 import { SAMPLES, type SampleMeta } from './samples'
 
@@ -40,24 +45,82 @@ function App() {
   const startedAtRef = useRef<number | null>(null)
   const [elapsedSec, setElapsedSec] = useState<number | null>(null)
 
+  // 練習 UX(パート選択・小節範囲ループ)
+  const [hand, setHand] = useState<HandSelection>('both')
+  const [rangeStart, setRangeStart] = useState('')
+  const [rangeEnd, setRangeEnd] = useState('')
+  const [measureCount, setMeasureCount] = useState<number | null>(null)
+  const [loopCount, setLoopCount] = useState(0)
+  const loopActiveRef = useRef(false)
+
+  const parsedRange = ((): {
+    range: MeasureRange | undefined
+    error: string | null
+  } => {
+    if (rangeStart === '' && rangeEnd === '') {
+      return { range: undefined, error: null }
+    }
+    const start = Number(rangeStart)
+    const end = Number(rangeEnd)
+    if (
+      rangeStart === '' ||
+      rangeEnd === '' ||
+      !Number.isInteger(start) ||
+      !Number.isInteger(end)
+    ) {
+      return {
+        range: undefined,
+        error: '開始と終了の両方の小節番号を指定してください',
+      }
+    }
+    if (
+      start < 1 ||
+      start > end ||
+      (measureCount !== null && end > measureCount)
+    ) {
+      return { range: undefined, error: '小節範囲が正しくありません' }
+    }
+    return { range: { start, end }, error: null }
+  })()
+
   const startPractice = useCallback(() => {
     const osmd = osmdRef.current
     if (!osmd) return
     // OSMD Cursor は OsmdCursorLike を構造的に満たす(§7.1 で API 確認済み)
-    const cursor = new ScoreCursor(osmd.cursor as unknown as OsmdCursorLike)
+    const cursor = new ScoreCursor(osmd.cursor as unknown as OsmdCursorLike, {
+      staffIds: hand === 'right' ? [1] : hand === 'left' ? [2] : undefined,
+      measureRange: parsedRange.range,
+    })
     const session = new PracticeSession(cursor)
     sessionRef.current = session
+    loopActiveRef.current = parsedRange.range !== undefined
     startedAtRef.current = Date.now()
+    setLoopCount(0)
     setElapsedSec(null)
     setSnapshot(session.start())
-  }, [])
+  }, [hand, parsedRange.range])
 
   const stopPractice = useCallback(() => {
     sessionRef.current = null
+    loopActiveRef.current = false
     startedAtRef.current = null
     setSnapshot(null)
+    setLoopCount(0)
     osmdRef.current?.cursor.reset()
   }, [])
+
+  // 小節範囲ループ: 完走したら少し置いて範囲の先頭から再開(計画書 §5.3)
+  useEffect(() => {
+    if (snapshot?.status !== 'finished' || !loopActiveRef.current) return
+    const timer = setTimeout(() => {
+      const session = sessionRef.current
+      if (session === null) return
+      setLoopCount((count) => count + 1)
+      startedAtRef.current = Date.now()
+      setSnapshot(session.start())
+    }, 700)
+    return () => clearTimeout(timer)
+  }, [snapshot])
 
   // MIDI / デバッグ鍵盤の打鍵を練習セッションへ流す
   useEffect(
@@ -164,6 +227,8 @@ function App() {
                 onClick={() => {
                   stopPractice()
                   setScore(null)
+                  setRangeStart('')
+                  setRangeEnd('')
                 }}
               >
                 ← 別の曲を開く
@@ -172,22 +237,39 @@ function App() {
                 snapshot={snapshot}
                 scoreReady={scoreReady}
                 elapsedSec={elapsedSec}
+                loopActive={loopActiveRef.current}
+                loopCount={loopCount}
                 onStart={startPractice}
                 onStop={stopPractice}
               />
             </div>
+            <ControlBar
+              hand={hand}
+              onHandChange={setHand}
+              measureCount={measureCount}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              onRangeChange={(start, end) => {
+                setRangeStart(start)
+                setRangeEnd(end)
+              }}
+              rangeError={parsedRange.error}
+              disabled={practicing}
+            />
             <ScoreView
               xml={score.xml}
               showManualControls={!practicing}
               onReady={(osmd) => {
                 osmdRef.current = osmd
                 setScoreReady(true)
+                setMeasureCount(osmd.Sheet.SourceMeasures.length)
               }}
               onUnload={() => {
                 osmdRef.current = null
                 sessionRef.current = null
                 setScoreReady(false)
                 setSnapshot(null)
+                setMeasureCount(null)
               }}
             />
           </>

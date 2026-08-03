@@ -4,6 +4,8 @@ type Props = {
   snapshot: PracticeSnapshot | null
   scoreReady: boolean
   elapsedSec: number | null
+  loopActive?: boolean
+  loopCount?: number
   onStart: () => void
   onStop: () => void
 }
@@ -13,6 +15,8 @@ export function PracticeBar({
   snapshot,
   scoreReady,
   elapsedSec,
+  loopActive = false,
+  loopCount = 0,
   onStart,
   onStop,
 }: Props) {
@@ -30,6 +34,22 @@ export function PracticeBar({
   }
 
   if (snapshot.status === 'finished') {
+    if (loopActive) {
+      return (
+        <div className="flex items-center gap-4 rounded border border-accent/40 bg-accent/5 px-4 py-2">
+          <span className="text-sm text-accent">
+            {loopCount + 1} 周目クリア!範囲の先頭に戻ります…
+          </span>
+          <button
+            type="button"
+            className="rounded border border-ink/30 px-3 py-1 text-sm hover:bg-ink/5"
+            onClick={onStop}
+          >
+            中断
+          </button>
+        </div>
+      )
+    }
     return (
       <div className="flex items-center gap-4 rounded border border-accent/40 bg-accent/5 px-4 py-2">
         <span className="font-serif text-lg text-accent">完走!</span>
@@ -58,7 +78,7 @@ export function PracticeBar({
   return (
     <div className="flex items-center gap-4">
       <span className="rounded bg-accent/10 px-2 py-0.5 text-sm text-accent">
-        練習中
+        {loopActive ? `ループ練習中(${loopCount + 1} 周目)` : '練習中'}
       </span>
       <span className="text-sm text-ink/60">
         {snapshot.stepIndex} 音進行 / 誤打 {snapshot.missCount} 回
