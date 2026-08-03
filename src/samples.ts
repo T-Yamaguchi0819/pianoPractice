@@ -12,9 +12,24 @@ export const SAMPLES: SampleMeta[] = [
     composer: 'フランス民謡',
   },
   {
+    file: 'choucho.musicxml',
+    title: 'ちょうちょう',
+    composer: 'ドイツ民謡',
+  },
+  {
+    file: 'mary-lamb.musicxml',
+    title: 'メリーさんの羊',
+    composer: 'アメリカ民謡',
+  },
+  {
     file: 'kaeru-no-gassho.musicxml',
     title: 'かえるの合唱',
     composer: 'ドイツ民謡',
+  },
+  {
+    file: 'ode-to-joy.musicxml',
+    title: '歓喜の歌(簡易アレンジ)',
+    composer: 'ベートーヴェン',
   },
   {
     file: 'minuet-in-g.musicxml',
