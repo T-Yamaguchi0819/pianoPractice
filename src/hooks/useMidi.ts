@@ -28,6 +28,7 @@ export function useMidi() {
   const [log, setLog] = useState<NoteLogEntry[]>([])
   const managerRef = useRef<MidiManager | null>(null)
   const nextLogId = useRef(0)
+  const noteListenersRef = useRef(new Set<(event: NoteEvent) => void>())
 
   const handleNote = useCallback(
     (event: NoteEvent, source: NoteLogEntry['source']) => {
@@ -38,9 +39,18 @@ export function useMidi() {
           LOG_LIMIT,
         ),
       )
+      noteListenersRef.current.forEach((listener) => listener(event))
     },
     [],
   )
+
+  /** MIDI・デバッグ鍵盤の両方の NoteEvent を購読する(練習モード用) */
+  const subscribeNote = useCallback((listener: (event: NoteEvent) => void) => {
+    noteListenersRef.current.add(listener)
+    return () => {
+      noteListenersRef.current.delete(listener)
+    }
+  }, [])
 
   useEffect(() => {
     if (!('requestMIDIAccess' in navigator)) {
@@ -104,5 +114,6 @@ export function useMidi() {
     pressed,
     log,
     emitDebugNote,
+    subscribeNote,
   }
 }

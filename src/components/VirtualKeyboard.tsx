@@ -24,8 +24,43 @@ const WHITE_COUNT = whiteKeys.length // 52
 const WHITE_WIDTH_PCT = 100 / WHITE_COUNT
 const BLACK_WIDTH_PCT = WHITE_WIDTH_PCT * 0.6
 
+function whiteKeyColor(
+  note: number,
+  pressed: ReadonlySet<number>,
+  highlights?: ReadonlyMap<number, KeyHighlight>,
+): string {
+  const highlight = highlights?.get(note)
+  if (highlight) return WHITE_HIGHLIGHT[highlight]
+  return pressed.has(note) ? 'bg-neutral-300' : 'bg-white'
+}
+
+function blackKeyColor(
+  note: number,
+  pressed: ReadonlySet<number>,
+  highlights?: ReadonlyMap<number, KeyHighlight>,
+): string {
+  const highlight = highlights?.get(note)
+  if (highlight) return BLACK_HIGHLIGHT[highlight]
+  return pressed.has(note) ? 'bg-neutral-500' : 'bg-ink'
+}
+
+/** 練習モードでの鍵の状態(計画書 §5.4: 期待=青、正打=緑、誤打=赤) */
+export type KeyHighlight = 'expected' | 'correct' | 'wrong'
+
+const WHITE_HIGHLIGHT: Record<KeyHighlight, string> = {
+  expected: 'bg-sky-300',
+  correct: 'bg-emerald-300',
+  wrong: 'bg-red-300',
+}
+const BLACK_HIGHLIGHT: Record<KeyHighlight, string> = {
+  expected: 'bg-sky-600',
+  correct: 'bg-emerald-600',
+  wrong: 'bg-red-600',
+}
+
 type Props = {
   pressed: ReadonlySet<number>
+  highlights?: ReadonlyMap<number, KeyHighlight>
   showNoteNames?: boolean
   /** クリック/タッチによるデバッグ入力(計画書 §13)。省略時は表示専用 */
   onNoteOn?: (note: number) => void
@@ -35,6 +70,7 @@ type Props = {
 /** 88鍵のバーチャル鍵盤。押下中の鍵をハイライトし、クリックでも発音イベントを出す */
 export function VirtualKeyboard({
   pressed,
+  highlights,
   showNoteNames = false,
   onNoteOn,
   onNoteOff,
@@ -66,9 +102,11 @@ export function VirtualKeyboard({
           key={note}
           type="button"
           aria-label={noteNumberToName(note)}
-          className={`flex flex-1 items-end justify-center rounded-b-sm border border-ink/25 pb-1 ${
-            pressed.has(note) ? 'bg-neutral-300' : 'bg-white'
-          }`}
+          className={`flex flex-1 items-end justify-center rounded-b-sm border border-ink/25 pb-1 ${whiteKeyColor(
+            note,
+            pressed,
+            highlights,
+          )}`}
           {...pointerHandlers(note)}
         >
           {showNoteNames && (
@@ -83,9 +121,11 @@ export function VirtualKeyboard({
           key={note}
           type="button"
           aria-label={noteNumberToName(note)}
-          className={`absolute top-0 z-10 h-[62%] rounded-b-sm border border-ink/40 ${
-            pressed.has(note) ? 'bg-neutral-500' : 'bg-ink'
-          }`}
+          className={`absolute top-0 z-10 h-[62%] rounded-b-sm border border-ink/40 ${blackKeyColor(
+            note,
+            pressed,
+            highlights,
+          )}`}
           style={{
             left: `${whiteIndex * WHITE_WIDTH_PCT - BLACK_WIDTH_PCT / 2}%`,
             width: `${BLACK_WIDTH_PCT}%`,
