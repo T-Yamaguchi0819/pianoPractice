@@ -21,6 +21,7 @@ Claude Code への実装指示書。フェーズ順に実装し、各フェー�
 ## 2. スコープ
 
 ### MVP でやること
+
 - Web MIDI API によるキーボード接続とノート入力の取得
 - MusicXML(.xml / .musicxml / .mxl)の読み込みと譜面表示
 - **練習モード**: 正しい鍵盤を押すまでカーソルが進まない wait 方式(本アプリの核)
@@ -31,6 +32,7 @@ Claude Code への実装指示書。フェーズ順に実装し、各フェー�
 - パブリックドメインのサンプル曲を数曲同梱
 
 ### MVP でやらないこと(バックログ行き)
+
 - 採点/プレイモード(メトロノーム同期のリズム判定)— Phase 7 として計画のみ記載
 - 音声(マイク)によるアコースティックピアノ対応
 - MIDI ファイル(.mid)からの譜面生成
@@ -41,17 +43,17 @@ Claude Code への実装指示書。フェーズ順に実装し、各フェー�
 
 ## 3. 技術スタック
 
-| 領域 | 選定 | 理由 |
-|---|---|---|
-| ビルド | Vite + TypeScript | 静的出力、高速、型安全 |
-| UI | React 18 | エコシステムと実装速度 |
-| 譜面表示 | OpenSheetMusicDisplay (OSMD) | MusicXML レンダリングとカーソル API を持つ事実上の標準 OSS |
-| MIDI 入力 | Web MIDI API(直接使用) | 依存を減らす。薄いラッパーを自作 |
-| スタイル | Tailwind CSS + CSS変数 | 実装速度とテーマ一貫性 |
-| 状態管理 | React hooks + Context(必要最小限) | MVP に外部状態ライブラリは不要 |
-| .mxl 展開 | JSZip | 圧縮 MusicXML 対応 |
-| テスト | Vitest | 採点・進行判定ロジックのユニットテスト |
-| ホスティング | GitHub Pages(Actions で自動デプロイ) | 無料・無限に維持可能 |
+| 領域         | 選定                                 | 理由                                                       |
+| ------------ | ------------------------------------ | ---------------------------------------------------------- |
+| ビルド       | Vite + TypeScript                    | 静的出力、高速、型安全                                     |
+| UI           | React 18                             | エコシステムと実装速度                                     |
+| 譜面表示     | OpenSheetMusicDisplay (OSMD)         | MusicXML レンダリングとカーソル API を持つ事実上の標準 OSS |
+| MIDI 入力    | Web MIDI API(直接使用)               | 依存を減らす。薄いラッパーを自作                           |
+| スタイル     | Tailwind CSS + CSS変数               | 実装速度とテーマ一貫性                                     |
+| 状態管理     | React hooks + Context(必要最小限)    | MVP に外部状態ライブラリは不要                             |
+| .mxl 展開    | JSZip                                | 圧縮 MusicXML 対応                                         |
+| テスト       | Vitest                               | 採点・進行判定ロジックのユニットテスト                     |
+| ホスティング | GitHub Pages(Actions で自動デプロイ) | 無料・無限に維持可能                                       |
 
 **ブラウザ対応**: Chrome / Edge / Firefox(Web MIDI 対応ブラウザ)。Safari は Web MIDI 非対応のため対象外とし、非対応ブラウザには案内画面を表示する。
 
@@ -80,17 +82,20 @@ UI層 (React components)
 ## 5. 機能仕様(MVP)
 
 ### 5.1 MIDI 接続
+
 - 起動時に `navigator.requestMIDIAccess()` を要求。拒否/非対応時は接続手順の案内を表示。
 - 複数デバイスがある場合はセレクタで選択。デバイスの抜き差し(statechange)に追随。
 - NoteOn(velocity>0)/ NoteOff を購読し、「現在押下中のノート番号の Set」を常に保持する。
 
 ### 5.2 譜面読み込みと表示
+
 - `.xml` / `.musicxml` はテキストとして、`.mxl` は JSZip で展開して OSMD に渡す。
 - 読み込み失敗時はエラー理由を日本語で表示(壊れたファイル、非対応要素など)。
 - OSMD のカーソルを表示し、練習位置を明示する。
 - パート選択(右手/左手/両手)は、OSMD の譜表(staff)単位で判定対象をフィルタする。表示は常に大譜表のまま、判定対象外の譜表は薄く描画できれば尚良い(困難なら判定のみ切り替えで可)。
 
 ### 5.3 練習モード(本アプリの核)
+
 ステートマシンとして実装する:
 
 - **WAITING**: カーソル位置の「期待ノート集合」(和音なら複数)の充足を待つ。
@@ -101,6 +106,7 @@ UI層 (React components)
 - **FINISHED**: 所要時間・誤打数を表示し、リプレイを促す。localStorage に記録を保存。
 
 **期待ノート集合の抽出ルール**:
+
 - 同一カーソル位置の全 Voice・全対象譜表の音符を集合にする(和音対応)。
 - 休符のみの位置はスキップして次の音符位置へ自動前進。
 - **タイで繋がれた後続音は期待集合から除外**(押し直し不要)。
@@ -110,15 +116,18 @@ UI層 (React components)
 **ループ練習**: 開始/終了小節を指定すると、その範囲で FINISHED 後に自動で先頭へ戻る。
 
 ### 5.4 バーチャル鍵盤
+
 - 88鍵を画面下部に常時表示。
 - 期待ノート=青、充足(正打)=緑、誤打=赤、単なる押下=グレーでリアルタイム表示。
 - 音名表示(C4 など)のトグル。
 
 ### 5.5 練習記録
+
 - 曲(ファイル名+内容ハッシュで同定)ごとに、練習回数・累計時間・最終練習日・ループ完走数を localStorage に保存。
 - ホーム画面に「最近練習した曲」リストを表示(ファイル自体は保存しない。再読み込みはユーザー操作。File System Access API での再オープン補助はバックログ)。
 
 ### 5.6 サンプル曲
+
 - パブリックドメイン曲の MusicXML を 3〜5 曲同梱(例: バイエルやブルクミュラーの平易な曲、メヌエット ト長調など)。出典とパブリックドメインである根拠を README に明記すること。信頼できる PD ソース(Mutopia Project / OpenScore 等の PD・CC0 素材)から取得するか、自前で打ち込む。
 
 ---
@@ -128,34 +137,49 @@ UI層 (React components)
 各フェーズは独立して動作確認できる単位。**完了条件を満たしてから次へ**。
 
 ### Phase 0: セットアップ
+
 Vite + React + TS + Tailwind + Vitest の雛形、ESLint/Prettier、GitHub Actions で Pages デプロイまで通す。
+
 - ✅ 完了条件: 空アプリが GitHub Pages で公開される。`npm test` が動く。
 
 ### Phase 1: MIDI 入力
+
 `midi/` モジュールと接続 UI。押下中ノート集合の管理。
+
 - ✅ 完了条件: 実機(または仮想 MIDI)の打鍵が画面のログとバーチャル鍵盤に即時反映される。デバイス抜き差しに追随する。
 
 ### Phase 2: 譜面読み込み・表示
+
 FilePicker、.xml/.mxl 対応、OSMD 描画、カーソル表示、サンプル曲同梱。
+
 - ✅ 完了条件: サンプル曲と手持ちの MusicXML が表示され、カーソルを手動ボタンで音符単位に進められる。
 
 ### Phase 3: 期待ノート抽出
+
 `score/` モジュール。カーソル位置→期待ノート集合(MIDI番号の Set)の変換。タイ・休符・和音の処理。
+
 - ✅ 完了条件: 代表パターン(単音/和音/タイ/休符/両手同時)のユニットテストが通る。
 
 ### Phase 4: 練習モード結合
+
 `practice/` ステートマシンを実装し、MIDI 入力と譜面を結合。誤打表示、完走画面。
+
 - ✅ 完了条件: サンプル曲を実機で最初から最後まで「弾いて進める」ことができる。誤打しても正しく待機し続ける。
 
 ### Phase 5: 練習 UX
+
 パート選択、小節範囲ループ、鍵盤ハイライトの仕上げ、非対応ブラウザ案内。
+
 - ✅ 完了条件: 右手のみで 4〜8 小節をループ練習する一連の流れが破綻なく行える。
 
 ### Phase 6: 記録と仕上げ
+
 localStorage 記録、ホーム画面、エラーハンドリング総点検、README(使い方・PD 曲の出典)。
+
 - ✅ 完了条件: リロード後も練習記録が残る。初見のユーザーが README なしで練習開始まで辿り着ける導線がある。
 
 ### Phase 7(バックログ・MVP後): 採点モード
+
 メトロノーム同期で曲が自動進行し、タイミング×音程で採点。設計だけ将来検討とし、MVP では着手しない。
 
 ---
@@ -175,20 +199,21 @@ localStorage 記録、ホーム画面、エラーハンドリング総点検、R
 ```ts
 // key: "ppa:v1:records"
 type Records = {
-  [scoreId: string]: {        // scoreId = fileName + ":" + sha256(content).slice(0,16)
-    title: string;            // MusicXML の movement-title か fileName
-    playCount: number;
-    totalPracticeSec: number;
-    lastPlayedAt: string;     // ISO 8601
-    completions: number;      // 完走(ループ含む)回数
-  };
-};
+  [scoreId: string]: {
+    // scoreId = fileName + ":" + sha256(content).slice(0,16)
+    title: string // MusicXML の movement-title か fileName
+    playCount: number
+    totalPracticeSec: number
+    lastPlayedAt: string // ISO 8601
+    completions: number // 完走(ループ含む)回数
+  }
+}
 
 // key: "ppa:v1:settings"
 type Settings = {
-  midiDeviceId?: string;
-  showNoteNames: boolean;
-};
+  midiDeviceId?: string
+  showNoteNames: boolean
+}
 ```
 
 スキーマ変更時はキーの `v1` を上げてマイグレーション関数を書く。
@@ -240,6 +265,7 @@ tests/                  # core/ のユニットテスト
 ## 12. バックログ(MVP 後の拡張候補)
 
 優先度順:
+
 1. 採点/プレイモード(Phase 7)
 2. 初見練習の譜面自動生成(著作権フリーの無限コンテンツ源)
 3. テンポ指定つき自動再生(モデル演奏)とソフト音源
