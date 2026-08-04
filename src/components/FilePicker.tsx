@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react'
-import { extractMusicXml, ScoreLoadError } from '../core/score/loader'
 
 export type PickedScore = { fileName: string; xml: string }
 
@@ -13,14 +12,23 @@ export function FilePicker({ onLoaded }: Props) {
 
   const handleFile = async (file: File) => {
     try {
-      const xml = await extractMusicXml(file.name, await file.arrayBuffer())
-      setError(null)
-      onLoaded({ fileName: file.name, xml })
-    } catch (e) {
+      // JSZip を含むローダーはファイルを開くまで読み込まない(バンドル分割)
+      const { extractMusicXml, ScoreLoadError } =
+        await import('../core/score/loader')
+      try {
+        const xml = await extractMusicXml(file.name, await file.arrayBuffer())
+        setError(null)
+        onLoaded({ fileName: file.name, xml })
+      } catch (e) {
+        setError(
+          e instanceof ScoreLoadError
+            ? e.message
+            : 'ファイルの読み込みに失敗しました。',
+        )
+      }
+    } catch {
       setError(
-        e instanceof ScoreLoadError
-          ? e.message
-          : 'ファイルの読み込みに失敗しました。',
+        '読み込みモジュールの取得に失敗しました。再読み込みしてください。',
       )
     }
   }
