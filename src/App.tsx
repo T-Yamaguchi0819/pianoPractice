@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import type { OpenSheetMusicDisplay } from 'opensheetmusicdisplay'
 import { ControlBar, type HandSelection } from './components/ControlBar'
 import type { PickedScore } from './components/FilePicker'
 import { Home } from './components/Home'
 import { MidiPanel } from './components/MidiPanel'
 import { PracticeBar } from './components/PracticeBar'
-import { ScoreView } from './components/ScoreView'
+
+// OSMD が大きいため譜面ビューはコード分割し、曲を開くまで読み込まない
+const ScoreView = lazy(() =>
+  import('./components/ScoreView').then((m) => ({ default: m.ScoreView })),
+)
 import {
   VirtualKeyboard,
   type KeyHighlight,
@@ -177,7 +181,9 @@ function App() {
     completionsRef.current = 0
     setLoopCount(0)
     setElapsedSec(null)
-    setSnapshot(session.start())
+    const first = session.start()
+    prevStatusRef.current = first.status
+    setSnapshot(first)
   }, [hand, parsedRange.range, commitPracticeRecord])
 
   const stopPractice = useCallback(() => {
@@ -185,9 +191,17 @@ function App() {
     sessionRef.current = null
     loopActiveRef.current = false
     startedAtRef.current = null
+    prevStatusRef.current = null
     setSnapshot(null)
     setLoopCount(0)
     osmdRef.current?.cursor.reset()
+  }, [commitPracticeRecord])
+
+  // タブを閉じる/離れるときに進行中の練習を記録する(§15.2-6)
+  useEffect(() => {
+    const handler = () => commitPracticeRecord()
+    window.addEventListener('pagehide', handler)
+    return () => window.removeEventListener('pagehide', handler)
   }, [commitPracticeRecord])
 
   // 小節範囲ループ: 完走したら少し置いて範囲の先頭から再開(計画書 §5.3)
@@ -198,12 +212,17 @@ function App() {
       if (session === null) return
       setLoopCount((count) => count + 1)
       startedAtRef.current = Date.now()
-      setSnapshot(session.start())
+      const first = session.start()
+      prevStatusRef.current = first.status
+      setSnapshot(first)
     }, 700)
     return () => clearTimeout(timer)
   }, [snapshot])
 
-  // MIDI / デバッグ鍵盤の打鍵を練習セッションへ流す
+  // MIDI / デバッグ鍵盤の打鍵を練習セッションへ流す。
+  // 完走の検出は ref で行う(setSnapshot の updater 内の副作用は StrictMode で
+  // 二重実行され completions が二重カウントされるため置かない)
+  const prevStatusRef = useRef<PracticeSnapshot['status'] | null>(null)
   useEffect(
     () =>
       subscribeNote((event) => {
@@ -213,15 +232,17 @@ function App() {
           event.kind === 'on'
             ? session.noteOn(event.note)
             : session.noteOff(event.note)
-        setSnapshot((prev) => {
-          if (next.status === 'finished' && prev?.status !== 'finished') {
-            completionsRef.current++
-            if (startedAtRef.current !== null) {
-              setElapsedSec((Date.now() - startedAtRef.current) / 1000)
-            }
+        if (
+          next.status === 'finished' &&
+          prevStatusRef.current !== 'finished'
+        ) {
+          completionsRef.current++
+          if (startedAtRef.current !== null) {
+            setElapsedSec((Date.now() - startedAtRef.current) / 1000)
           }
-          return next
-        })
+        }
+        prevStatusRef.current = next.status
+        setSnapshot(next)
       }),
     [subscribeNote],
   )
@@ -257,12 +278,14 @@ function App() {
     <div className="flex min-h-screen flex-col">
       <header className="flex flex-wrap items-baseline justify-between gap-2 px-6 py-4">
         <h1 className="font-serif text-2xl">ピアノ練習</h1>
-        <MidiPanel
-          status={status}
-          devices={devices}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-        />
+        {!practicing && (
+          <MidiPanel
+            status={status}
+            devices={devices}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+          />
+        )}
       </header>
 
       <main className="flex flex-1 flex-col gap-4 px-6 pb-4">
@@ -277,18 +300,22 @@ function App() {
         ) : (
           <>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <button
-                type="button"
-                className="text-sm text-accent underline-offset-2 hover:underline"
-                onClick={() => {
-                  stopPractice()
-                  setScore(null)
-                  setRangeStart('')
-                  setRangeEnd('')
-                }}
-              >
-                ← 別の曲を開く
-              </button>
+              {practicing ? (
+                <span />
+              ) : (
+                <button
+                  type="button"
+                  className="text-sm text-accent underline-offset-2 hover:underline"
+                  onClick={() => {
+                    stopPractice()
+                    setScore(null)
+                    setRangeStart('')
+                    setRangeEnd('')
+                  }}
+                >
+                  ← 別の曲を開く
+                </button>
+              )}
               <PracticeBar
                 snapshot={snapshot}
                 scoreReady={scoreReady}
@@ -299,46 +326,58 @@ function App() {
                 onStop={stopPractice}
               />
             </div>
-            <ControlBar
-              hand={hand}
-              onHandChange={setHand}
-              measureCount={measureCount}
-              rangeStart={rangeStart}
-              rangeEnd={rangeEnd}
-              onRangeChange={(start, end) => {
-                setRangeStart(start)
-                setRangeEnd(end)
-              }}
-              rangeError={parsedRange.error}
-              disabled={practicing}
-            />
-            <ScoreView
-              xml={score.xml}
-              showManualControls={!practicing}
-              onReady={(osmd) => {
-                osmdRef.current = osmd
-                setScoreReady(true)
-                setMeasureCount(osmd.Sheet.SourceMeasures.length)
-              }}
-              onUnload={() => {
-                osmdRef.current = null
-                sessionRef.current = null
-                setScoreReady(false)
-                setSnapshot(null)
-                setMeasureCount(null)
-              }}
-            />
+            {!practicing && (
+              <ControlBar
+                hand={hand}
+                onHandChange={setHand}
+                measureCount={measureCount}
+                rangeStart={rangeStart}
+                rangeEnd={rangeEnd}
+                onRangeChange={(start, end) => {
+                  setRangeStart(start)
+                  setRangeEnd(end)
+                }}
+                rangeError={parsedRange.error}
+              />
+            )}
+            <Suspense
+              fallback={
+                <p className="text-sm text-ink/50">譜面エンジンを読み込み中…</p>
+              }
+            >
+              <ScoreView
+                xml={score.xml}
+                showManualControls={!practicing}
+                dimmedStaffId={
+                  hand === 'right' ? 2 : hand === 'left' ? 1 : null
+                }
+                onReady={(osmd) => {
+                  osmdRef.current = osmd
+                  setScoreReady(true)
+                  setMeasureCount(osmd.Sheet.SourceMeasures.length)
+                }}
+                onUnload={() => {
+                  osmdRef.current = null
+                  sessionRef.current = null
+                  setScoreReady(false)
+                  setSnapshot(null)
+                  setMeasureCount(null)
+                }}
+              />
+            </Suspense>
           </>
         )}
 
-        <label className="flex items-center gap-2 self-end text-sm text-ink/70">
-          <input
-            type="checkbox"
-            checked={showNoteNames}
-            onChange={(e) => setShowNoteNames(e.target.checked)}
-          />
-          音名を表示
-        </label>
+        {!practicing && (
+          <label className="flex items-center gap-2 self-end text-sm text-ink/70">
+            <input
+              type="checkbox"
+              checked={showNoteNames}
+              onChange={(e) => setShowNoteNames(e.target.checked)}
+            />
+            音名を表示
+          </label>
+        )}
       </main>
 
       <footer className="px-2 pb-2">

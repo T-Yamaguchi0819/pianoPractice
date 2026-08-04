@@ -1,6 +1,34 @@
 import { useEffect, useRef, useState } from 'react'
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay'
 
+const INK_COLOR = '#000000'
+const DIM_COLOR = '#c0b9ad'
+
+/**
+ * 判定対象外の譜表の音符を薄い色にする(計画書 §5.2)。
+ * dimStaffId が null なら全音符を通常色に戻す。呼び出し後に再描画が必要。
+ */
+function applyStaffDim(
+  osmd: OpenSheetMusicDisplay,
+  dimStaffId: number | null,
+): void {
+  for (const measure of osmd.Sheet.SourceMeasures) {
+    for (const container of measure.VerticalSourceStaffEntryContainers) {
+      for (const staffEntry of container.StaffEntries) {
+        if (!staffEntry) continue
+        const dim =
+          dimStaffId !== null && staffEntry.ParentStaff.Id === dimStaffId
+        for (const voiceEntry of staffEntry.VoiceEntries) {
+          voiceEntry.StemColor = dim ? DIM_COLOR : INK_COLOR
+          for (const note of voiceEntry.Notes) {
+            note.NoteheadColor = dim ? DIM_COLOR : INK_COLOR
+          }
+        }
+      }
+    }
+  }
+}
+
 type Props = {
   xml: string
   /** 譜面の描画完了時に OSMD インスタンスを渡す(練習モードのカーソル制御用) */
@@ -8,6 +36,8 @@ type Props = {
   onUnload?: () => void
   /** 手動カーソル操作の表示(練習中は非表示にする) */
   showManualControls?: boolean
+  /** 薄く描画する譜表 ID(パート選択で判定対象外の側)。null で全て通常表示 */
+  dimmedStaffId?: number | null
 }
 
 /** OSMD による譜面描画とカーソル制御 */
@@ -16,6 +46,7 @@ export function ScoreView({
   onReady,
   onUnload,
   showManualControls = true,
+  dimmedStaffId = null,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null)
@@ -62,6 +93,15 @@ export function ScoreView({
       container.innerHTML = ''
     }
   }, [xml])
+
+  // パート選択に応じて判定対象外の譜表を薄く描画(再描画を伴う)
+  useEffect(() => {
+    const osmd = osmdRef.current
+    if (!ready || osmd === null) return
+    applyStaffDim(osmd, dimmedStaffId)
+    osmd.render()
+    osmd.cursor.show()
+  }, [ready, dimmedStaffId])
 
   const cursor = () => osmdRef.current?.cursor
 
